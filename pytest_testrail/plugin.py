@@ -245,7 +245,6 @@ class PyTestRailPlugin(object):
         if self.results:
             tests_list = [str(result['case_id']) for result in self.results]
             print('[{}] Testcases to publish: {}'.format(TESTRAIL_PREFIX, ', '.join(tests_list)))
-            print(f"self.results is {self.results}")
 
             if self.testrun_id:
                 self.add_results(self.testrun_id)
