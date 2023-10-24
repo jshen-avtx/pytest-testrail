@@ -220,7 +220,7 @@ class PyTestRailPlugin(object):
             defectids = item.get_closest_marker(TESTRAIL_DEFECTS_PREFIX).kwargs.get('defect_ids')
         if item.get_closest_marker(TESTRAIL_PREFIX):
             testcaseids = item.get_closest_marker(TESTRAIL_PREFIX).kwargs.get('ids')
-            if rep.when in ['setup', 'teardown',  'call'] and testcaseids:
+            if rep.when in ['setup', 'call'] and testcaseids:
                 if defectids:
                     self.add_result(
                         clean_test_ids(testcaseids),
