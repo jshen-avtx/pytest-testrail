@@ -220,7 +220,7 @@ class PyTestRailPlugin(object):
             defectids = item.get_closest_marker(TESTRAIL_DEFECTS_PREFIX).kwargs.get('defect_ids')
         if item.get_closest_marker(TESTRAIL_PREFIX):
             testcaseids = item.get_closest_marker(TESTRAIL_PREFIX).kwargs.get('ids')
-            if rep.when == 'call' and testcaseids:
+            if rep.when == ['setup', 'call'] and testcaseids:
                 if defectids:
                     self.add_result(
                         clean_test_ids(testcaseids),
@@ -245,6 +245,7 @@ class PyTestRailPlugin(object):
         if self.results:
             tests_list = [str(result['case_id']) for result in self.results]
             print('[{}] Testcases to publish: {}'.format(TESTRAIL_PREFIX, ', '.join(tests_list)))
+            print(f"self.results is {self.results}")
 
             if self.testrun_id:
                 self.add_results(self.testrun_id)
