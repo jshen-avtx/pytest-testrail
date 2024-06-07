@@ -1,7 +1,7 @@
 # -*- coding: UTF-8 -*-
 from datetime import datetime
 from operator import itemgetter
-
+import logging
 import pytest
 import re
 import warnings
@@ -35,7 +35,8 @@ GET_TESTS_URL = 'get_tests/{}'
 
 COMMENT_SIZE_LIMIT = 4000
 
-
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 class DeprecatedTestDecorator(DeprecationWarning):
     pass
 
@@ -251,34 +252,39 @@ class PyTestRailPlugin(object):
 
     def pytest_sessionfinish(self, session, exitstatus):
         """ Publish results in TestRail """
-        print('[{}] Start publishing'.format(TESTRAIL_PREFIX))
-        if self.results:
-            tests_list = [str(result['case_id']) for result in self.results]
-            print('[{}] Testcases to publish: {}'.format(TESTRAIL_PREFIX, ', '.join(tests_list)))
+        logger.info('[{}] Start publishing'.format(TESTRAIL_PREFIX))
+        try:
+            if self.results:
+                tests_list = [str(result['case_id']) for result in self.results]
+                logger.info('[{}] Testcases to publish: {}'.format(TESTRAIL_PREFIX, ', '.join(tests_list)))
 
-            if self.testrun_id:
-                self.add_results(self.testrun_id)
-            elif self.testplan_id:
-                testruns = self.get_available_testruns(self.testplan_id)
-                print('[{}] Testruns to update: {}'.format(TESTRAIL_PREFIX, ', '.join([str(elt) for elt in testruns])))
-                for testrun_id in testruns:
-                    self.add_results(testrun_id)
+                if self.testrun_id:
+                    self.add_results(self.testrun_id)
+                elif self.testplan_id:
+                    testruns = self.get_available_testruns(self.testplan_id)
+                    logger.info('[{}] Testruns to update: {}'.format(TESTRAIL_PREFIX, ', '.join([str(elt) for elt in testruns])))
+                    for testrun_id in testruns:
+                        self.add_results(testrun_id)
+                else:
+                    raise ValueError('[{}] No data published'.format(TESTRAIL_PREFIX))
+
+                if self.close_on_complete and self.testrun_id:
+                    self.close_test_run(self.testrun_id)
+                elif self.close_on_complete and self.testplan_id:
+                    self.close_test_plan(self.testplan_id)
             else:
-                print('[{}] No data published'.format(TESTRAIL_PREFIX))
-
-            if self.close_on_complete and self.testrun_id:
-                self.close_test_run(self.testrun_id)
-            elif self.close_on_complete and self.testplan_id:
-                self.close_test_plan(self.testplan_id)
-        else:
-            # If there are errors encountered during the test run, print them
-            if self.errors:
-                print('[{}] Errors encountered during test run:'.format(TESTRAIL_PREFIX))
-                for error in self.errors:
-                    self.add_error("Error publishing results: {}".format(error))
-                    print(error)
-        print('[{}] End publishing'.format(TESTRAIL_PREFIX))
-    # plugin
+                # If there are errors encountered during the test run, log them
+                if self.errors:
+                    logger.error('[{}] Errors encountered during test run:'.format(TESTRAIL_PREFIX))
+                    for error in self.errors:
+                        self.add_error("Error publishing results: {}".format(error))
+                        logger.error(error)
+                    raise ValueError('[{}] Errors encountered during test run'.format(TESTRAIL_PREFIX))
+        except Exception as e:
+            logger.exception("An error occurred during publishing")
+            raise e
+        finally:
+            logger.info('[{}] End publishing'.format(TESTRAIL_PREFIX))
 
     def add_result(self, test_ids, status, comment='', defects=None, duration=0, test_parametrize=None):
         """
@@ -323,18 +329,18 @@ class PyTestRailPlugin(object):
 
         # Manage case of "blocked" testcases
         if self.publish_blocked is False:
-            print('[{}] Option "Don\'t publish blocked testcases" activated'.format(TESTRAIL_PREFIX))
+            logger.info('[{}] Option "Don\'t publish blocked testcases" activated'.format(TESTRAIL_PREFIX))
             blocked_tests_list = [
                 test.get('case_id') for test in self.get_tests(testrun_id)
                 if test.get('status_id') == TESTRAIL_TEST_STATUS["blocked"]
             ]
-            print('[{}] Blocked testcases excluded: {}'.format(TESTRAIL_PREFIX,
+            logger.error('[{}] Blocked testcases excluded: {}'.format(TESTRAIL_PREFIX,
                                                                ', '.join(str(elt) for elt in blocked_tests_list)))
             self.results = [result for result in self.results if result.get('case_id') not in blocked_tests_list]
 
         # prompt enabling include all test cases from test suite when creating test run
         if self.include_all:
-            print('[{}] Option "Include all testcases from test suite for test run" activated'.format(TESTRAIL_PREFIX))
+            logger.info('[{}] Option "Include all testcases from test suite for test run" activated'.format(TESTRAIL_PREFIX))
 
         # Publish results
         data = {'results': []}
@@ -375,7 +381,7 @@ class PyTestRailPlugin(object):
         )
         error = self.client.get_error(response)
         if error:
-            print('[{}] Info: Testcases not published for following reason: "{}"'.format(TESTRAIL_PREFIX, error))
+            logger.error('[{}] Info: Testcases not published for following reason: "{}"'.format(TESTRAIL_PREFIX, error))
             self.add_error("Error publishing results: {}".format(error))
 
     def create_test_run(self, assign_user_id, project_id, suite_id, include_all,
@@ -402,11 +408,11 @@ class PyTestRailPlugin(object):
         )
         error = self.client.get_error(response)
         if error:
-            print('[{}] Failed to create testrun: "{}"'.format(TESTRAIL_PREFIX, error))
+            logger.error('[{}] Failed to create testrun: "{}"'.format(TESTRAIL_PREFIX, error))
             self.add_error("Error publishing results: {}".format(error))
         else:
             self.testrun_id = response['id']
-            print('[{}] New testrun created with name "{}" and ID={}'.format(TESTRAIL_PREFIX,
+            logger.info('[{}] New testrun created with name "{}" and ID={}'.format(TESTRAIL_PREFIX,
                                                                              testrun_name,
                                                                              self.testrun_id))
 
@@ -422,10 +428,10 @@ class PyTestRailPlugin(object):
         )
         error = self.client.get_error(response)
         if error:
-            print('[{}] Failed to close test run: "{}"'.format(TESTRAIL_PREFIX, error))
+            logger.error('[{}] Failed to close test run: "{}"'.format(TESTRAIL_PREFIX, error))
             self.add_error("Error publishing results: {}".format(error))
         else:
-            print('[{}] Test run with ID={} was closed'.format(TESTRAIL_PREFIX, self.testrun_id))
+            logger.info('[{}] Test run with ID={} was closed'.format(TESTRAIL_PREFIX, self.testrun_id))
 
     def close_test_plan(self, testplan_id):
         """
@@ -439,10 +445,10 @@ class PyTestRailPlugin(object):
         )
         error = self.client.get_error(response)
         if error:
-            print('[{}] Failed to close test plan: "{}"'.format(TESTRAIL_PREFIX, error))
+            logger.error('[{}] Failed to close test plan: "{}"'.format(TESTRAIL_PREFIX, error))
             self.add_error("Error publishing results: {}".format(error))
         else:
-            print('[{}] Test plan with ID={} was closed'.format(TESTRAIL_PREFIX, self.testplan_id))
+            logger.info('[{}] Test plan with ID={} was closed'.format(TESTRAIL_PREFIX, self.testplan_id))
 
     def is_testrun_available(self):
         """
@@ -456,7 +462,7 @@ class PyTestRailPlugin(object):
         )
         error = self.client.get_error(response)
         if error:
-            print('[{}] Failed to retrieve testrun: "{}"'.format(TESTRAIL_PREFIX, error))
+            logger.error('[{}] Failed to retrieve testrun: "{}"'.format(TESTRAIL_PREFIX, error))
             self.add_error("Error publishing results: {}".format(error))
             return False
 
@@ -474,7 +480,7 @@ class PyTestRailPlugin(object):
         )
         error = self.client.get_error(response)
         if error:
-            print('[{}] Failed to retrieve testplan: "{}"'.format(TESTRAIL_PREFIX, error))
+            logger.error('[{}] Failed to retrieve testplan: "{}"'.format(TESTRAIL_PREFIX, error))
             self.add_error("Error publishing results: {}".format(error))
             return False
 
@@ -492,7 +498,7 @@ class PyTestRailPlugin(object):
         )
         error = self.client.get_error(response)
         if error:
-            print('[{}] Failed to retrieve testplan: "{}"'.format(TESTRAIL_PREFIX, error))
+            logger.error('[{}] Failed to retrieve testplan: "{}"'.format(TESTRAIL_PREFIX, error))
             self.add_error("Error publishing results: {}".format(error))
         else:
             for entry in response['entries']:
@@ -512,7 +518,7 @@ class PyTestRailPlugin(object):
         )
         error = self.client.get_error(response)
         if error:
-            print('[{}] Failed to get tests: "{}"'.format(TESTRAIL_PREFIX, error))
+            logger.error('[{}] Failed to get tests: "{}"'.format(TESTRAIL_PREFIX, error))
             self.add_error("Error publishing results: {}".format(error))
             return None
         return response
