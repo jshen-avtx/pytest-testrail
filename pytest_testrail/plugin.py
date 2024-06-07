@@ -320,11 +320,8 @@ class PyTestRailPlugin(object):
             converter = unicode
         except NameError:
             converter = lambda s, c: str(bytes(s, "utf-8"), c)
+        
         # Results are sorted by 'case_id' and by 'status_id' (worst result at the end)
-
-        # Comment sort by status_id due to issue with pytest-rerun failures,
-        # for details refer to issue https://github.com/allankp/pytest-testrail/issues/100
-        # self.results.sort(key=itemgetter('status_id'))
         self.results.sort(key=itemgetter('case_id'))
 
         # Manage case of "blocked" testcases
@@ -335,7 +332,7 @@ class PyTestRailPlugin(object):
                 if test.get('status_id') == TESTRAIL_TEST_STATUS["blocked"]
             ]
             logger.error('[{}] Blocked testcases excluded: {}'.format(TESTRAIL_PREFIX,
-                                                               ', '.join(str(elt) for elt in blocked_tests_list)))
+                                                            ', '.join(str(elt) for elt in blocked_tests_list)))
             self.results = [result for result in self.results if result.get('case_id') not in blocked_tests_list]
 
         # prompt enabling include all test cases from test suite when creating test run
@@ -383,6 +380,10 @@ class PyTestRailPlugin(object):
         if error:
             logger.error('[{}] Info: Testcases not published for following reason: "{}"'.format(TESTRAIL_PREFIX, error))
             self.add_error("Error publishing results: {}".format(error))
+            # Report all test cases as failed with the error message
+            for result in self.results:
+                self.add_error("Error publishing results: {}".format(error))
+                self.add_result([result['case_id']], TESTRAIL_TEST_STATUS["failed"], error)
 
     def create_test_run(self, assign_user_id, project_id, suite_id, include_all,
                         testrun_name, tr_keys, milestone_id, description=''):
