@@ -273,13 +273,12 @@ class PyTestRailPlugin(object):
         else:
             print('[{}] No data published'.format(TESTRAIL_PREFIX))
 
-        if self.close_on_complete:
-            if self.testrun_id:
-                self.close_test_run(self.testrun_id)
-            elif self.testplan_id:
-                self.close_test_plan(self.testplan_id)
-
+        if self.close_on_complete and self.testrun_id:
+            self.close_test_run(self.testrun_id)
+        elif self.close_on_complete and self.testplan_id:
+            self.close_test_plan(self.testplan_id)
         print('[{}] End publishing'.format(TESTRAIL_PREFIX))
+
 
     def publish_results_for_run(self, testrun_id):
         """Publish results for a specific test run"""
@@ -293,7 +292,14 @@ class PyTestRailPlugin(object):
             else:
                 print('[{}] Other errors occurred, reporting them for testrun {}'.format(TESTRAIL_PREFIX, testrun_id))
                 error_message_parts = error.split(')')
-                invalid_test_ids = [part.split('case ')[1].split(' ')[0] for part in error_message_parts if 'case' in part]
+                # TODO: Not sure how to support test code with only one case [{'case_id': 38432499366, 'status_id': 1, 'comment': 'None', 'duration': 287.6693093829963, 'defects': None, 'test_parametrize': None}]
+                invalid_test_ids = []
+                for part in error_message_parts:
+                    if 'case' in part:
+                        split_part = part.split('case ')
+                        if len(split_part) > 1:
+                            invalid_test_ids.append(split_part[1].split(' ')[0])
+                
                 valid_results = [result for result in self.results if result['case_id'] not in invalid_test_ids]
                 for invalid_test_id in invalid_test_ids:
                     self.add_error_results(testrun_id, [invalid_test_id], error)
@@ -393,7 +399,7 @@ class PyTestRailPlugin(object):
 
     def add_results(self, testrun_id):
         """
-        Add results one by one to improve error handling.
+        Add results one by one to improve errors handling.
 
         :param testrun_id: Id of the testrun to feed
 
@@ -404,110 +410,75 @@ class PyTestRailPlugin(object):
         except NameError:
             converter = lambda s, c: str(bytes(s, "utf-8"), c)
         # Results are sorted by 'case_id' and by 'status_id' (worst result at the end)
-        self.results.sort(key=itemgetter("case_id"))
+
+        # Comment sort by status_id due to issue with pytest-rerun failures,
+        # for details refer to issue https://github.com/allankp/pytest-testrail/issues/100
+        # self.results.sort(key=itemgetter('status_id'))
+        self.results.sort(key=itemgetter('case_id'))
 
         # Manage case of "blocked" testcases
         if self.publish_blocked is False:
-            logger.info(
-                '[{}] Option "Don\'t publish blocked testcases" activated'.format(
-                    TESTRAIL_PREFIX
-                )
-            )
+            print('[{}] Option "Don\'t publish blocked testcases" activated'.format(TESTRAIL_PREFIX))
             blocked_tests_list = [
-                test.get("case_id")
-                for test in self.get_tests(testrun_id)
-                if test.get("status_id") == TESTRAIL_TEST_STATUS["blocked"]
+                test.get('case_id') for test in self.get_tests(testrun_id)
+                if test.get('status_id') == TESTRAIL_TEST_STATUS["blocked"]
             ]
-            logger.info(
-                "[{}] Blocked testcases excluded: {}".format(
-                    TESTRAIL_PREFIX, ", ".join(str(elt) for elt in blocked_tests_list)
-                )
-            )
-            self.results = [
-                result
-                for result in self.results
-                if result.get("case_id") not in blocked_tests_list
-            ]
+            print('[{}] Blocked testcases excluded: {}'.format(TESTRAIL_PREFIX,
+                                                               ', '.join(str(elt) for elt in blocked_tests_list)))
+            self.results = [result for result in self.results if result.get('case_id') not in blocked_tests_list]
 
         # prompt enabling include all test cases from test suite when creating test run
         if self.include_all:
-            logger.info(
-                '[{}] Option "Include all testcases from test suite for test run" activated'.format(
-                    TESTRAIL_PREFIX
-                )
-            )
+            print('[{}] Option "Include all testcases from test suite for test run" activated'.format(TESTRAIL_PREFIX))
 
         # Publish results
-        data = {"results": []}
+        data = {'results': []}
         for result in self.results:
-            entry = {
-                "status_id": result["status_id"],
-                "case_id": result["case_id"],
-                "defects": result["defects"],
-            }
+            entry = {'status_id': result['status_id'], 'case_id': result['case_id'], 'defects': result['defects']}
             if self.version:
-                entry["version"] = self.version
-            comment = result.get("comment", "")
-            test_parametrize = result.get("test_parametrize", "")
-            entry["comment"] = ""
+                entry['version'] = self.version
+            comment = result.get('comment', '')
+            test_parametrize = result.get('test_parametrize', '')
+            entry['comment'] = u''
             if test_parametrize:
-                entry["comment"] += "# Test parametrize: #\n"
-                entry["comment"] += str(test_parametrize) + "\n\n"
+                entry['comment'] += u"# Test parametrize: #\n"
+                entry['comment'] += str(test_parametrize) + u'\n\n'
             if comment:
                 if self.custom_comment:
-                    entry["comment"] += self.custom_comment + "\n"
+                    entry['comment'] += self.custom_comment + '\n'
                     # Indent text to avoid string formatting by TestRail. Limit size of comment.
-                    entry["comment"] += "# Pytest result: #\n"
-                    entry["comment"] += (
-                        "Log truncated\n...\n"
-                        if len(str(comment)) > COMMENT_SIZE_LIMIT
-                        else ""
-                    )
-                    entry["comment"] += "    " + converter(str(comment), "utf-8")[
-                        -COMMENT_SIZE_LIMIT:
-                    ].replace(
-                        "\n", "\n    "
-                    )  # noqa
+                    entry['comment'] += u"# Pytest result: #\n"
+                    entry['comment'] += u'Log truncated\n...\n' if len(str(comment)) > COMMENT_SIZE_LIMIT else u''
+                    entry['comment'] += u"    " + converter(str(comment), "utf-8")[-COMMENT_SIZE_LIMIT:].replace('\n', '\n    ') # noqa
                 else:
                     # Indent text to avoid string formatting by TestRail. Limit size of comment.
-                    entry["comment"] += "# Pytest result: #\n"
-                    entry["comment"] += (
-                        "Log truncated\n...\n"
-                        if len(str(comment)) > COMMENT_SIZE_LIMIT
-                        else ""
-                    )
-                    entry["comment"] += "    " + converter(str(comment), "utf-8")[
-                        -COMMENT_SIZE_LIMIT:
-                    ].replace(
-                        "\n", "\n    "
-                    )  # noqa
-            elif comment == "":
-                entry["comment"] = self.custom_comment
-            duration = result.get("duration")
+                    entry['comment'] += u"# Pytest result: #\n"
+                    entry['comment'] += u'Log truncated\n...\n' if len(str(comment)) > COMMENT_SIZE_LIMIT else u''
+                    entry['comment'] += u"    " + converter(str(comment), "utf-8")[-COMMENT_SIZE_LIMIT:].replace('\n', '\n    ') # noqa
+            elif comment == '':
+                entry['comment'] = self.custom_comment
+            duration = result.get('duration')
             if duration:
-                duration = (
-                    1 if (duration < 1) else int(round(duration))
-                )  # TestRail API doesn't manage milliseconds
-                entry["elapsed"] = str(duration) + "s"
-            data["results"].append(entry)
+                duration = 1 if (duration < 1) else int(round(duration))  # TestRail API doesn't manage milliseconds
+                entry['elapsed'] = str(duration) + 's'
+            data['results'].append(entry)
 
-        # Send the HTTP POST request outside the loop
         response = self.client.send_post(
-            ADD_RESULTS_URL.format(testrun_id), data, cert_check=self.cert_check
+            ADD_RESULTS_URL.format(testrun_id),
+            data,
+            cert_check=self.cert_check
         )
-
-        logger.info("Response received: {}".format(response))
-
-        for resp in response:
-            comment = resp.get("comment", "")
-            if "TerraformException" in comment:
-                status_id = resp.get("status_id")
-                self.add_terraform_error_results(testrun_id, status_id, comment)
-
-        error = self.client.get_error(resp)
+        error = self.client.get_error(response)
+        if isinstance(response, str) and "error" in response:
+            logger.error("Error in sending results to TestRail. Response: {}".format(response))
+        if isinstance(response, list):
+            for resp in response:
+                comment = resp.get("comment", "")
+                if "TerraformException" in comment:
+                    status_id = resp.get("status_id")
+                    self.add_terraform_error_results(testrun_id, status_id, comment)
+        error = self.client.get_error(response)
         if error:
-            logger.error("Error in sending results to TestRail. Status code: {}".format(resp.status_code))
-            error = self.client.get_error(resp)
             return error
 
     def create_test_run(self, assign_user_id, project_id, suite_id, include_all,
