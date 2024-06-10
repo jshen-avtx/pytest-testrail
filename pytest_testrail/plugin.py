@@ -479,6 +479,7 @@ class PyTestRailPlugin(object):
                     self.add_terraform_error_results(testrun_id, status_id, comment)
         error = self.client.get_error(response)
         if error:
+            print('[{}] Info: Testcases not published for following reason: "{}"'.format(TESTRAIL_PREFIX, error))
             return error
 
     def create_test_run(self, assign_user_id, project_id, suite_id, include_all,
