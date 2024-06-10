@@ -254,30 +254,33 @@ class PyTestRailPlugin(object):
 
     def pytest_sessionfinish(self, session, exitstatus):
         """Publish results in TestRail"""
-        print('[{}] Start publishing'.format(TESTRAIL_PREFIX))
-        
+        logger.info('[{}] Start publishing'.format(TESTRAIL_PREFIX))
+        error = None
         if not self.results:
-            print('[{}] No test results to publish'.format(TESTRAIL_PREFIX))
+            logger.error('[{}] No test results to publish'.format(TESTRAIL_PREFIX))
             raise Exception('No test results to publish in TestRail')
 
         tests_list = [str(result['case_id']) for result in self.results]
-        print('[{}] Testcases to publish: {}'.format(TESTRAIL_PREFIX, ', '.join(tests_list)))
-
+        logger.info('[{}] Testcases to publish: {}'.format(TESTRAIL_PREFIX, ', '.join(tests_list)))
         if self.testrun_id:
-            self.publish_results_for_run(self.testrun_id)
+            error = self.publish_results_for_run(self.testrun_id)
         elif self.testplan_id:
             testruns = self.get_available_testruns(self.testplan_id)
-            print('[{}] Testruns to update: {}'.format(TESTRAIL_PREFIX, ', '.join(map(str, testruns))))
+            logger.info('[{}] Testruns to update: {}'.format(TESTRAIL_PREFIX, ', '.join(map(str, testruns))))
             for testrun_id in testruns:
-                self.publish_results_for_run(testrun_id)
+                error = self.publish_results_for_run(testrun_id)
         else:
-            print('[{}] No data published'.format(TESTRAIL_PREFIX))
+            logger.info('[{}] No data published'.format(TESTRAIL_PREFIX))
 
         if self.close_on_complete and self.testrun_id:
             self.close_test_run(self.testrun_id)
         elif self.close_on_complete and self.testplan_id:
             self.close_test_plan(self.testplan_id)
-        print('[{}] End publishing'.format(TESTRAIL_PREFIX))
+        if error:
+            logger.error('[{}] Exception occurred during publishing: {}'.format(TESTRAIL_PREFIX, str(error)))
+            raise Exception('Error occurred during publishing in TestRail: {}'.format(str(error)))
+        else:
+            logger.info('[{}] End publishing'.format(TESTRAIL_PREFIX))
 
 
     def publish_results_for_run(self, testrun_id):
@@ -303,6 +306,7 @@ class PyTestRailPlugin(object):
                 valid_results = [result for result in self.results if result['case_id'] not in invalid_test_ids]
                 for invalid_test_id in invalid_test_ids:
                     self.add_error_results(testrun_id, [invalid_test_id], error)
+            return error
         else:
             print('[{}] Test results successfully published for testrun {}'.format(TESTRAIL_PREFIX, testrun_id))
 
@@ -479,7 +483,6 @@ class PyTestRailPlugin(object):
                     self.add_terraform_error_results(testrun_id, status_id, comment)
         error = self.client.get_error(response)
         if error:
-            print('[{}] Info: Testcases not published for following reason: "{}"'.format(TESTRAIL_PREFIX, error))
             return error
 
     def create_test_run(self, assign_user_id, project_id, suite_id, include_all,
