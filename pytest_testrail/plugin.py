@@ -2,9 +2,13 @@
 from datetime import datetime
 from operator import itemgetter
 
+import logging
 import pytest
 import re
 import warnings
+import logging
+from datetime import datetime
+from typing import Union, Tuple
 
 # Reference: http://docs.gurock.com/testrail-api2/reference-statuses
 TESTRAIL_TEST_STATUS = {
@@ -12,13 +16,20 @@ TESTRAIL_TEST_STATUS = {
     "blocked": 2,
     "untested": 3,
     "retest": 4,
-    "failed": 5
+    "failed": 5,
+    "deferred": 6,
+    "NA": 7,
+    "terraformerror": 8,
 }
 
+# Update the mapping for pytest outcomes
 PYTEST_TO_TESTRAIL_STATUS = {
     "passed": TESTRAIL_TEST_STATUS["passed"],
     "failed": TESTRAIL_TEST_STATUS["failed"],
     "skipped": TESTRAIL_TEST_STATUS["blocked"],
+    "deferred": TESTRAIL_TEST_STATUS["deferred"],
+    "NA": TESTRAIL_TEST_STATUS["NA"],
+    "terraformerror": TESTRAIL_TEST_STATUS["terraformerror"],
 }
 
 DT_FORMAT = '%d-%m-%Y %H:%M:%S'
@@ -35,7 +46,8 @@ GET_TESTS_URL = 'get_tests/{}'
 
 COMMENT_SIZE_LIMIT = 4000
 
-
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 class DeprecatedTestDecorator(DeprecationWarning):
     pass
 
@@ -141,7 +153,7 @@ def get_testrail_keys(items):
 class PyTestRailPlugin(object):
     def __init__(self, client, assign_user_id, project_id, suite_id, include_all, cert_check, tr_name,
                  tr_description='', run_id=0, plan_id=0, version='', close_on_complete=False,
-                 publish_blocked=True, skip_missing=False, milestone_id=None, custom_comment=None):
+                 publish_blocked=True, skip_missing=False, milestone_id=None, custom_comment=None, jira_owner=None, test_dirs=None, gh_run_id=None):
         self.assign_user_id = assign_user_id
         self.cert_check = cert_check
         self.client = client
@@ -159,6 +171,18 @@ class PyTestRailPlugin(object):
         self.skip_missing = skip_missing
         self.milestone_id = milestone_id
         self.custom_comment = custom_comment
+        self.jira_owner = jira_owner
+        self.test_dirs = test_dirs
+        self.gh_run_id = gh_run_id
+
+    def jira(self) -> None:
+        try:
+            logger.info("Starting Jira creation")
+            logger.info(f"jira_owner: {self.jira_owner}")
+            logger.info("Starting Test Dirs creation")
+            logger.info(f"jira_owner: {self.test_dirs}")
+        except AssertionError:
+            logging.error("Checks failed; not creating or updating Jiras!")
 
     # pytest hooks
 
@@ -286,12 +310,12 @@ class PyTestRailPlugin(object):
             }
             self.results.append(data)
 
-    def add_results(self, testrun_id):
+    def add_results(self, testrun_id, gh_run_id=None):
         """
-        Add results one by one to improve errors handling.
+        Add results one by one to improve error handling.
 
-        :param testrun_id: Id of the testrun to feed
-
+        :param testrun_id: ID of the test run to feed.
+        :param gh_run_id: GitHub Actions run ID.
         """
         # unicode converter for compatibility of python 2 and 3
         try:
@@ -346,6 +370,11 @@ class PyTestRailPlugin(object):
                     entry['comment'] += u"    " + converter(str(comment), "utf-8")[-COMMENT_SIZE_LIMIT:].replace('\n', '\n    ') # noqa
             elif comment == '':
                 entry['comment'] = self.custom_comment
+
+            if gh_run_id:
+                workflow_url = f"https://github.com/test/cloudn/actions/runs/{gh_run_id}"
+                entry['comment'] += f"\nGitHub Actions run URL: {workflow_url}"
+
             duration = result.get('duration')
             if duration:
                 duration = 1 if (duration < 1) else int(round(duration))  # TestRail API doesn't manage milliseconds
